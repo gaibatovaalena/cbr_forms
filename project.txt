@@ -1,0 +1,196 @@
+import urllib.request, os, re
+from bs4 import BeautifulSoup # HTML парсер
+
+
+def getBanksListHtmlFile():
+    """
+    Функция получения содержимого страницы со списком всех банков.
+    """ 
+    return urllib.request.urlopen('http://www.cbr.ru/credit/transparent.asp')
+
+
+def getBankInfoHtmlFile(bankId):
+    """
+    Функция получения содержимого основной страницы банка с указанным id.
+    """ 
+    return urllib.request.urlopen('http://www.cbr.ru/credit/coinfo.asp?id=' + bankId)
+
+
+def getBanksRegNumbers(banksListHtmlFile):
+    """
+    Функция получения массива регистрационных номеров банков. (НЕ ИСПОЛЬЗУЕТСЯ)
+    """ 
+    numbers = []
+    if banksListHtmlFile is not None:
+        for line in banksListHtmlFile:
+            numberMatch = re.match(r'\s*<td align="right">(\d+)</td>', line.decode('cp1251')) 
+            if numberMatch:
+                numbers.append(int(numberMatch.group(1)))
+    return numbers
+
+
+def getBanksIds(banksListHtmlFile):
+    """
+    Функция получения словаря {"ИД банка": "Название банка"} для всех банков.
+    """ 
+    ids = {}
+    if banksListHtmlFile is not None:
+        for line in banksListHtmlFile:
+            numberMatch = re.match(r'.*<a href=\"javascript:info\((\d+)\)\">([^<]+)</a>', line.decode('cp1251'))
+            if numberMatch:
+                ids[numberMatch.group(1)] = numberMatch.group(2)
+    return ids
+
+
+def getF101Url(soup):
+    """
+    Функция получения ссылки на страницу с отчетностью по форме 101.
+    В качестве параметра soup передается отпарсенная основная страница с инфой по банку.
+    """
+    try:
+        urlSuffix = soup.find(name='form', attrs={'name': 'f101'}).option['value']
+    except:
+        return None
+    
+    if urlSuffix is None or len(urlSuffix) < 1:
+        return None
+    
+    return 'http://www.cbr.ru/credit/101.asp?' + urlSuffix
+
+
+def getF102Url(soup):
+    """
+    См. метод getF101Url(soup)
+    """
+    try:
+        urlSuffix = soup.find(name='form', attrs={'name': 'f102'}).option['value']
+    except:
+        return None
+    
+    if urlSuffix is None or len(urlSuffix) < 1:
+        return None
+    
+    return 'http://www.cbr.ru/credit/102.asp?' + urlSuffix
+
+
+def getF134Url(soup):
+    """
+    См. метод getF101Url(soup)
+    """
+    try:
+        urlSuffix = soup.find('form', attrs={'name': 'f134'}).find('select', attrs={'name': 'f134'}).option['value']
+    except:
+        return None
+
+    if urlSuffix is None or len(urlSuffix) < 1:
+        return None
+    
+    return 'http://www.cbr.ru/credit/' + urlSuffix.replace('®', r'&reg')
+
+
+def getF135Url(soup):
+    """
+    См. метод getF101Url(soup)
+    """
+    try:
+        urlSuffix = soup.find('form', attrs={'name': 'f134'}).find('select', attrs={'name': 'f135'}).option['value']
+    except:
+        return None
+
+    if urlSuffix is None or len(urlSuffix) < 1:
+        return None
+    
+    return 'http://www.cbr.ru/credit/' + urlSuffix.replace('®', r'&reg')
+
+
+def getUrlFile(url):
+    """
+    Функция получения хтмл-файла с указанным URL. Если произошел редирект, то считается, что
+    произошла ошибка доступа к отсутствующему ресурсу и возвращается None.
+    """
+    try:
+        file = urllib.request.urlopen(url)
+        # Проверяем, был ли редирект
+        if file is not None and url == file.geturl():
+            return file
+        else:
+            return None
+    except:
+        return None
+
+
+def getFormFile(formType, soup):
+    """
+    Получение хтмл-файла с указанной формой.
+    Параметр formType - одна из строк: 'f101', 'f102', 'f134', 'f135'.
+    В качестве параметра soup передается отпарсенная основная страница с инфой по банку.
+    """
+    if formType == 'f101':
+        return getUrlFile(getF101Url(soup))
+    if formType == 'f102':
+        return getUrlFile(getF102Url(soup))
+    if formType == 'f134':
+        return getUrlFile(getF134Url(soup))
+    if formType == 'f135':
+        return getUrlFile(getF135Url(soup))
+
+
+def ensureDir(f):
+    """
+    Функция, которая создает директорию для фалйа с путем f, если та вдруг не существует.
+    Например, если f = 'D:\dir1\dir2\dir3\f' и диск D пуст, то рекурсивно содадутся директории
+    dir1, dir2, dir3.
+    """
+    d = os.path.dirname(f)
+    if not os.path.exists(d):
+        os.makedirs(d)
+
+
+if __name__ == '__main__':
+    # Получаем id-шники всех банков 
+    ids = getBanksIds(getBanksListHtmlFile())
+    
+    # Перебираем id-шники
+    for bankId in ids:
+        print("Processing: " + ids[bankId])
+        
+        # Для каждого банка создается своя директория
+        bankDir = 'C:\\cbr\\' + bankId + '\\';
+        ensureDir(bankDir);
+        
+        # Получаем хтмл-файл с основной страницей банка
+        file = getBankInfoHtmlFile(bankId)
+        if file is not None:
+            
+            # ... парсим этот файл
+            soup = BeautifulSoup(file.read())
+            
+            # Получаем все формы 
+            for formType in ['f101', 'f102', 'f134', 'f135']:
+                formFile = getFormFile(formType, soup)
+                if formFile is not None:
+                    try:
+                        
+                        # Перезаписываем хтмл-файл с формой во внешний файл на жестком диске 
+                        outFile = open(bankDir + formType, 'wb')
+                        for line in formFile:
+                            outFile.write(line)
+                        outFile.close()
+                        
+                    except:
+                        print("Cannot write form " + formType + " for bank: " + ids[bankId])
+                else:
+                    print("No form " + formType + " for bank: " + ids[bankId])
+        else:    
+            print("No data for bank: " + ids[bankId])      
+ 
+                  
+    """
+    file = getBankInfoHtmlFile('450000462')
+    soup = BeautifulSoup(file.read())
+    print(getF134Url(soup))
+    
+    file = urllib.request.urlopen(getF134Url(soup))
+    print(file)
+    """
+    
